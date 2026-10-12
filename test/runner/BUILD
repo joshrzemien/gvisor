@@ -1,4 +1,4 @@
-load("//tools:defs.bzl", "bzl_library", "go_binary")
+load("//tools:defs.bzl", "bzl_library", "go_binary", "go_test")
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -8,7 +8,10 @@ package(
 go_binary(
     name = "runner",
     testonly = 1,
-    srcs = ["main.go"],
+    srcs = [
+        "main.go",
+        "xml.go",
+    ],
     data = [
         "//:release",
         "//test/runner/fuse",
@@ -39,4 +42,10 @@ bzl_library(
     srcs = ["defs.bzl"],
     visibility = ["//visibility:private"],
     deps = ["//tools:defs_bzl"],
+)
+
+go_test(
+    name = "runner_test",
+    srcs = ["xml_test.go"],
+    embed = [":runner"],
 )
