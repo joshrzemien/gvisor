@@ -1078,6 +1078,25 @@ func (fs *filesystem) ReadlinkAt(ctx context.Context, rp *vfs.ResolvingPath) (st
 	})
 }
 
+// isSameUpperFile returns true if a and b are both copied-up and their upper
+// layer files are the same file, i.e. hard links to one inode.
+func (fs *filesystem) isSameUpperFile(ctx context.Context, a, b *dentry) (bool, error) {
+	if a.isDir() || b.isDir() || !a.isCopiedUp() || !b.isCopiedUp() {
+		return false, nil
+	}
+	vfsObj := fs.vfsfs.VirtualFilesystem()
+	opts := vfs.StatOptions{Mask: linux.STATX_INO}
+	aStat, err := vfsObj.StatAt(ctx, fs.creds, &vfs.PathOperation{Root: a.upperVD, Start: a.upperVD}, &opts)
+	if err != nil {
+		return false, err
+	}
+	bStat, err := vfsObj.StatAt(ctx, fs.creds, &vfs.PathOperation{Root: b.upperVD, Start: b.upperVD}, &opts)
+	if err != nil {
+		return false, err
+	}
+	return aStat.Ino == bStat.Ino && aStat.DevMajor == bStat.DevMajor && aStat.DevMinor == bStat.DevMinor, nil
+}
+
 // RenameAt implements vfs.FilesystemImpl.RenameAt.
 func (fs *filesystem) RenameAt(ctx context.Context, rp *vfs.ResolvingPath, oldParentVD vfs.VirtualDentry, oldName string, opts vfs.RenameOptions) error {
 	// Resolve newParent first to verify that it's on this Mount.
@@ -1236,6 +1255,19 @@ func (fs *filesystem) RenameAt(ctx context.Context, rp *vfs.ResolvingPath, oldPa
 	// upper layer.
 	if err := renamed.copyUpLocked(ctx); err != nil {
 		return err
+	}
+	// rename(2): "If oldpath and newpath are existing hard links referring to
+	// the same file, then rename() does nothing, and returns a success
+	// status." The upper layer does the same, which would leave oldName in
+	// place and make creating the whiteout at the origin below impossible.
+	if replaced != nil {
+		same, err := fs.isSameUpperFile(ctx, renamed, replaced)
+		if err != nil {
+			return err
+		}
+		if same {
+			return nil
+		}
 	}
 	// If renamed is a directory, all of its descendants need to be copied-up
 	// before they're renamed on the upper layer.
